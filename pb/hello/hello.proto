@@ -1,0 +1,53 @@
+
+syntax = "proto3";
+
+package hello;
+
+option go_package = "github.com/arham09/hello-grpc/pb/hello";
+
+import "google/protobuf/empty.proto";
+import "google/api/annotations.proto";
+
+
+// The request message containing the user's name
+message HelloRequest {
+  string name = 1;
+}
+
+// The response message containing the greetings
+message HelloResponse {
+  bool success = 1;
+  string message = 2;
+  string name = 3;
+}
+
+message UpdateStatusRequest {
+  string offer_id = 1;
+  string status_id = 2;
+  string note = 3;
+}
+
+message UpdateStatusResponse {
+  string offer_id = 1;
+}
+
+
+
+// Here is the overall greeting service definition where we define all our endpoints
+service Greeter {
+  // Sends a greeting
+  rpc Hello (HelloRequest) returns (HelloResponse) {
+    option (google.api.http) = {
+      post: "/v1/message"
+      body: "*"
+    };
+  }
+
+  rpc Ping(google.protobuf.Empty) returns (HelloResponse) {
+    option (google.api.http) = {
+      get : "/v1/ping"
+    };
+  }
+
+  rpc Ping2(google.protobuf.Empty) returns (HelloResponse) {}
+}
