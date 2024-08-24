@@ -8,8 +8,13 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
+
+	flagsmithClient "github.com/Flagsmith/flagsmith-go-client/v3"
+	flagsmith "github.com/open-feature/go-sdk-contrib/providers/flagsmith/pkg"
+	"github.com/open-feature/go-sdk/openfeature"
 
 	"github.com/arham09/hello-grpc/svc"
 	"github.com/arham09/hello-grpc/svc/hello"
@@ -17,6 +22,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/grpclog"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -43,7 +49,19 @@ func main() {
 		}
 	}
 
-	grpcSrv, err := newGRPCServer()
+	// Initialize the flagsmith client
+	// pass key here
+	client := flagsmithClient.NewClient("")
+
+	// Initialize the flagsmith provider
+	provider := flagsmith.NewProvider(client, flagsmith.WithUsingBooleanConfigValue())
+
+	openfeature.SetProvider(provider)
+
+	// Create open feature client
+	ofClient := openfeature.NewClient("my-app")
+
+	grpcSrv, err := newGRPCServer(ofClient)
 	if err != nil {
 		log.Fatalln("Failed to create gRPC server:", err)
 	}
@@ -57,19 +75,7 @@ func main() {
 	srv.Run()
 }
 
-func enableCors(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, HEAD, OPTIONS")
-			if r.Method == http.MethodOptions {
-					w.WriteHeader(http.StatusNoContent)
-					return
-			}
-			h.ServeHTTP(w, r)
-	})
-}
-
-func newGRPCServer() (*grpc.Server, error) {
+func newGRPCServer(ff *openfeature.Client) (*grpc.Server, error) {
 	opts := []grpc.ServerOption{
 		grpc.ConnectionTimeout(300 * time.Second),
 	}
@@ -77,7 +83,7 @@ func newGRPCServer() (*grpc.Server, error) {
 	srv := grpc.NewServer(opts...)
 	if err := svc.RegisterServices(
 		srv,
-		hello.RegisterService(),
+		hello.RegisterService(ff),
 	); err != nil {
 		return nil, errors.Wrap(err, "failed to register gRPC service")
 	}
@@ -108,6 +114,38 @@ func Setup(host string, grpcSrv *grpc.Server, opts ...func(*Server)) *Server {
 	}
 
 	return s
+}
+
+func enableCors(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		h.ServeHTTP(w, r)
+	})
+}
+
+func allowCORS(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			if r.Method == "OPTIONS" && r.Header.Get("Access-Control-Request-Method") != "" {
+				preflightHandler(w, r)
+				return
+			}
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// preflightHandler adds the necessary headers in order to serve
+// CORS from any origin using the methods "GET", "HEAD", "POST", "PUT", "DELETE"
+// We insist, don't do this without consideration in production systems.
+func preflightHandler(w http.ResponseWriter, r *http.Request) {
+	headers := []string{"Content-Type", "Accept", "Authorization"}
+	w.Header().Set("Access-Control-Allow-Headers", strings.Join(headers, ","))
+	methods := []string{"GET", "HEAD", "POST", "PUT", "DELETE"}
+	w.Header().Set("Access-Control-Allow-Methods", strings.Join(methods, ","))
+	grpclog.Infof("Preflight request for %s", r.URL.Path)
 }
 
 func (s *Server) Run(closeFn ...func()) {
